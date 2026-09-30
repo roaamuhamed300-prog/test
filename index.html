@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Passport Scanner to Excel - Demo</title>
+<style>
+:root{--bg:#eef1f4;--ink:#14202b;--mute:#5b6b7a;--line:#cfd7de;--acc:#0e6b5c;--new:#dff3ea;--bad:#b3261e;--card:#fff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "Segoe UI",Tahoma,system-ui,sans-serif}
+header{padding:18px 24px;background:var(--ink);color:#fff;display:flex;flex-wrap:wrap;gap:6px 18px;align-items:baseline}
+header h1{margin:0;font-size:20px;font-weight:600}
+header span{color:#9fb2c2;font-size:13px}
+main{max-width:1100px;margin:0 auto;padding:18px;display:grid;gap:16px;grid-template-columns:minmax(0,380px) minmax(0,1fr)}
+@media(max-width:860px){main{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:16px}
+h2{margin:0 0 10px;font-size:16px}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}
+.btn{background:var(--acc);color:#fff;border:0;border-radius:6px;padding:9px 14px;font:inherit;cursor:pointer}
+.btn.ghost{background:#fff;color:var(--acc);border:1px solid var(--acc)}
+.btn:focus-visible,textarea:focus-visible{outline:3px solid #7cc4b6;outline-offset:2px}
+.muted{color:var(--mute);font-size:13px;margin:4px 0}
+.scan{position:relative;background:#0b141c;border-radius:6px;aspect-ratio:4/3;overflow:hidden}
+.scan video{width:100%;height:100%;object-fit:cover}
+.frame{position:absolute;inset:30% 8%;border:3px solid #7cc4b6;border-radius:10px;pointer-events:none}
+.idle{position:absolute;inset:0;display:grid;place-items:center;color:#9fb2c2;text-align:center;padding:20px}
+textarea{width:100%;height:54px;border:1px solid var(--line);border-radius:6px;padding:8px;font:13px ui-monospace,Consolas,monospace;resize:vertical}
+#status{margin-top:10px;padding:12px;border-radius:6px;background:#f5f7f9;border:1px solid var(--line)}
+#status.ok{background:var(--new);border-color:#9bd3bf}
+#status.warn{background:#fff4d6;border-color:#ebcf7a}
+#status.bad{background:#fdecea;border-color:#e6a8a3;color:var(--bad)}
+#status b{display:block;font-size:16px;margin-bottom:4px}
+dl{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:6px 0 0;font-size:13px}
+dt{color:var(--mute)}dd{margin:0}
+.grid{overflow:auto;border:1px solid var(--line);border-radius:6px;max-height:460px}
+table{border-collapse:collapse;font-size:13px;width:100%;white-space:nowrap}
+th,td{border:1px solid var(--line);padding:5px 9px;text-align:left}
+th{background:#e3e9ee;position:sticky;top:0}
+td.n,th.n{background:#e3e9ee;color:var(--mute);text-align:center;width:38px}
+tr.new td{background:var(--new)}
+tr.new.flash td{animation:fl 1.4s ease-out}
+@keyframes fl{from{background:#8fd9bd}to{background:var(--new)}}
+@media(prefers-reduced-motion:reduce){tr.new.flash td{animation:none}}
+.stat{margin-left:auto;align-self:center;color:var(--mute);font-size:13px}
+</style>
+</head>
+<body>
+<header><h1>Passport scanner to Excel</h1><span>Demo. Everything runs in this browser tab; no passport data is uploaded anywhere.</span></header>
+<main>
+<div>
+  <section class="card">
+    <h2>1. Choose the Excel file</h2>
+    <div class="row">
+      <label class="btn">Open existing .xlsx<input type="file" id="file" accept=".xlsx,.xls" hidden></label>
+      <button class="btn ghost" id="demoWb">Use a demo workbook</button>
+    </div>
+    <p class="muted" id="wbInfo">No workbook loaded yet.</p>
+  </section>
+  <section class="card" style="margin-top:16px">
+    <h2>2. Scan the passport QR</h2>
+    <div class="scan"><video id="v" playsinline muted></video><div class="frame"></div><div class="idle" id="idle">Camera is off.<br>Press "Start camera" or simulate a scan.</div></div>
+    <input type="range" id="zoom" hidden style="width:100%;margin-top:8px" aria-label="Zoom">
+    <canvas id="c" hidden></canvas>
+    <div class="row">
+      <button class="btn" id="cam">Start camera</button>
+      <button class="btn ghost" id="sim">Simulate scan</button>
+      <label class="btn ghost">Take a photo<input type="file" id="photo2" accept="image/*" capture="environment" hidden></label>
+      <label class="btn ghost">Decode a photo<input type="file" id="photo" accept="image/*" hidden></label>
+    </div>
+    <textarea id="wedge" placeholder="USB scanner, or paste the text your phone scanner app shows" aria-label="QR text input"></textarea>
+    <div id="status">Ready for the first passport.</div>
+  </section>
+</div>
+<section class="card">
+  <h2>3. The workbook, updated live</h2>
+  <div class="grid"><table id="tbl"></table></div>
+  <div class="row"><button class="btn" id="dl">Download updated Excel</button><span class="stat" id="count"></span></div>
+  <p class="muted">Rows highlighted in green were added by scanning. Columns are matched by header name, so the client's own layout works.</p>
+</section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
+<script>if(typeof jsQR==='undefined'){document.write('<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"><\/script>')}</script>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const COLS=['Scan Time','Passport No','Surname','Given Names','Nationality','DOB','Sex','Expiry','Issuing Office','Booklet Serial'];
+const OFFICES={1:'Mogamma',2:'Heliopolis',3:'Nasr City',12:'Giza',13:'Agouza',61:'Aswan'};
+let wb=null,ws=null,fileName='passports.xlsx',baseRows=0,lock=false,simI=0;
+
+/* ---------- ICAO 9303 check digits ---------- */
+function cd(s){const w=[7,3,1];let t=0;for(let i=0;i<s.length;i++){const c=s[i];const v=c==='<'?0:/\d/.test(c)?+c:c.charCodeAt(0)-55;t+=v*w[i%3]}return t%10}
+function mkMrz(sur,giv,pn,dob,sex,exp){
+  const l1=('P<EGY'+sur+'<<'+giv).padEnd(44,'<');
+  const opt='<'.repeat(14),a=pn.padEnd(9,'<');
+  const body=a+cd(a)+'EGY'+dob+cd(dob)+sex+exp+cd(exp)+opt+cd(opt);
+  return l1+'\n'+body+cd(body.slice(0,10)+body.slice(13,20)+body.slice(21,43));
+}
+const SAMPLES=[
+  mkMrz('HASSAN','OMAR','A12345678','930925','M','330924')+'|12345678|00|12',
+  mkMrz('AHMED','SARA','B23456789','010820','F','310819')+'|23456789|00|01',
+  mkMrz('MOHAMED','ALI','C34567890','880314','M','290313')+'|34567890|00|13'
+];
+
+/* ---------- parsing ---------- */
+function ymd(s,dob){let y=+s.slice(0,2);y=dob&&y>new Date().getFullYear()%100?1900+y:2000+y;return s.slice(4,6)+'/'+s.slice(2,4)+'/'+y}
+function parse(raw){
+  const parts=raw.trim().split('|'),m=parts[0].replace(/\s+/g,'');
+  if(m.length<88||!m.startsWith('P<'))throw Error('This does not look like a passport QR (MRZ part is '+m.length+' characters, expected 88).');
+  const l1=m.slice(0,44),l2=m.slice(44,88),names=l1.slice(5).replace(/<+$/,'').split('<<');
+  const serial=parts[1]||'';let cls='',office='';
+  if(parts.length>=4){cls=parts[2];office=parts[3]}else if(parts[2]){cls=parts[2].slice(0,2);office=parts[2].slice(2)}
+  const p={pn:l2.slice(0,9).replace(/</g,''),sur:names[0].replace(/</g,' '),giv:(names[1]||'').replace(/</g,' '),nat:l2.slice(10,13),
+    dob:ymd(l2.slice(13,19),true),sex:l2[20],exp:ymd(l2.slice(21,27),false),serial,cls,officeCode:office,
+    office:OFFICES[parseInt(office,10)]||(office?'Office '+office:'')};
+  const fails=[];
+  if(cd(l2.slice(0,9))!=l2[9])fails.push('passport number');
+  if(cd(l2.slice(13,19))!=l2[19])fails.push('date of birth');
+  if(cd(l2.slice(21,27))!=l2[27])fails.push('expiry date');
+  if(cd(l2.slice(0,10)+l2.slice(13,20)+l2.slice(21,43))!=l2[43])fails.push('overall check');
+  p.fails=fails;return p;
+}
+
+/* ---------- workbook ---------- */
+function rows(){return XLSX.utils.sheet_to_json(ws,{header:1,defval:''})}
+function setWb(w,name){wb=w;ws=wb.Sheets[wb.SheetNames[0]];fileName=name;
+  if(!rows().length)XLSX.utils.sheet_add_aoa(ws,[COLS],{origin:0});
+  baseRows=rows().length;$('wbInfo').textContent=name+' loaded ('+(baseRows-1)+' existing rows).';render()}
+function demoWb(){
+  const a=[COLS,['29/09/2026 18:20','X98765432','IBRAHIM','KARIM','EGY','02/02/1990','M','01/02/2030','Mogamma','90000001'],
+    ['29/09/2026 18:23','Y87654321','NABIL','HANA','EGY','11/11/1995','F','10/11/2031','Heliopolis','90000002']];
+  const w=XLSX.utils.book_new();XLSX.utils.book_append_sheet(w,XLSX.utils.aoa_to_sheet(a),'Passports');setWb(w,'demo_workbook.xlsx')}
+function field(h){h=String(h).toLowerCase();
+  if(/serial|booklet|manufact/.test(h))return'serial';if(/passport|doc/.test(h))return'pn';
+  if(/sur|last|family/.test(h))return'sur';if(/given|first|forename/.test(h))return'giv';
+  if(/name/.test(h))return'full';if(/nation|country/.test(h))return'nat';
+  if(/birth|dob/.test(h))return'dob';if(/sex|gender/.test(h))return'sex';
+  if(/expir/.test(h))return'exp';if(/office|issu/.test(h))return'office';
+  if(/time|date|scan/.test(h))return'time';return''}
+function now(){const d=new Date(),z=n=>String(n).padStart(2,'0');return z(d.getDate())+'/'+z(d.getMonth()+1)+'/'+d.getFullYear()+' '+z(d.getHours())+':'+z(d.getMinutes())+':'+z(d.getSeconds())}
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+let lastAdded=-1;
+function render(){
+  const r=rows();if(!r.length){$('tbl').innerHTML='';return}
+  const w=Math.max(...r.map(x=>x.length));
+  let h='<tr><th class="n"></th>'+Array.from({length:w},(_,i)=>'<th>'+esc(r[0][i]??'')+'</th>').join('')+'</tr>';
+  r.slice(1).forEach((row,i)=>{const idx=i+1,isNew=idx>=baseRows;
+    h+='<tr class="'+(isNew?'new':'')+(idx===lastAdded?' flash':'')+'"><td class="n">'+(idx+1)+'</td>'+
+      Array.from({length:w},(_,j)=>'<td>'+esc(row[j]??'')+'</td>').join('')+'</tr>'});
+  $('tbl').innerHTML=h;
+  $('count').textContent=(r.length-1)+' rows, '+Math.max(0,r.length-baseRows)+' added this session';
+  const g=document.querySelector('.grid');g.scrollTop=g.scrollHeight}
+
+/* ---------- handling a scan ---------- */
+function status(cls,html){const s=$('status');s.className=cls;s.innerHTML=html}
+function beep(ok){try{const a=new (window.AudioContext||window.webkitAudioContext)(),o=a.createOscillator(),g=a.createGain();
+  o.frequency.value=ok?880:220;g.gain.value=.08;o.connect(g);g.connect(a.destination);o.start();o.stop(a.currentTime+(ok?.12:.3))}catch(e){}}
+function handle(raw){
+  if(lock||!raw.trim())return;lock=true;setTimeout(()=>lock=false,1800);
+  if(!ws)demoWb();
+  let p;try{p=parse(raw)}catch(e){beep(0);return status('bad','<b>Could not read this QR</b>'+esc(e.message))}
+  if(p.fails.length){beep(0);return status('bad','<b>Scan rejected: check digit failed</b>The '+p.fails.join(', ')+' did not validate. Please scan again.')}
+  const r=rows(),hdr=r[0],pnCol=hdr.findIndex(x=>field(x)==='pn');
+  if(pnCol>=0&&r.slice(1).some(x=>String(x[pnCol]).trim()===p.pn)){beep(0);
+    return status('warn','<b>Already in the sheet</b>Passport '+esc(p.pn)+' was not added again.')}
+  const v={...p,time:now(),full:p.sur+' '+p.giv};
+  XLSX.utils.sheet_add_aoa(ws,[hdr.map(x=>v[field(x)]??'')],{origin:-1});
+  lastAdded=rows().length-1;beep(1);render();
+  status('ok','<b>Saved to Excel: '+esc(p.giv+' '+p.sur)+'</b><dl><dt>Passport</dt><dd>'+esc(p.pn)+'</dd><dt>Born</dt><dd>'+p.dob+' ('+p.sex+')</dd><dt>Expires</dt><dd>'+p.exp+
+    '</dd><dt>Issued at</dt><dd>'+esc(p.office||'-')+'</dd><dt>Booklet serial</dt><dd>'+esc(p.serial||'-')+'</dd></dl>Ready for the next passport.')}
+
+/* ---------- inputs ---------- */
+$('file').onchange=async e=>{const f=e.target.files[0];if(!f)return;
+  try{setWb(XLSX.read(await f.arrayBuffer(),{type:'array'}),f.name)}catch(x){$('wbInfo').textContent='Could not open that file.'}};
+$('demoWb').onclick=demoWb;
+$('sim').onclick=()=>{lock=false;handle(SAMPLES[simI++%SAMPLES.length])};
+let t;$('wedge').oninput=e=>{clearTimeout(t);t=setTimeout(()=>{const v=e.target.value;if(v.trim()){lock=false;handle(v);e.target.value=''}},400)};
+$('dl').onclick=()=>{if(!wb)return;XLSX.writeFile(wb,fileName.replace(/\.(xlsx|xls)$/i,'')+'_updated.xlsx')};
+
+let stream=null;
+$('cam').onclick=async()=>{
+  if(stream){stream.getTracks().forEach(x=>x.stop());stream=null;$('v').srcObject=null;$('idle').style.display='grid';$('zoom').hidden=true;$('cam').textContent='Start camera';return}
+  if(!window.isSecureContext||!navigator.mediaDevices)return status('bad','<b>The camera needs a secure (https) link</b>Open this page from its https address in Chrome or Safari, not from a saved file or inside WhatsApp. Or use "Take a photo".');
+  try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1920},height:{ideal:1080}}})}
+  catch(e){return status('bad','<b>Camera not available</b>Allow camera access in the browser (error: '+esc(e.name||'unknown')+'). You can still use "Simulate scan".')}
+  const v=$('v');v.srcObject=stream;try{await v.play()}catch(e){}
+  try{const tr=stream.getVideoTracks()[0],cp=tr.getCapabilities?tr.getCapabilities():{};
+    if(cp.focusMode&&cp.focusMode.includes('continuous'))tr.applyConstraints({advanced:[{focusMode:'continuous'}]}).catch(()=>{});
+    const z=$('zoom');if(cp.zoom){z.min=cp.zoom.min;z.max=cp.zoom.max;z.step=cp.zoom.step||0.1;z.value=cp.zoom.min;z.hidden=false;
+      z.oninput=()=>tr.applyConstraints({advanced:[{zoom:+z.value}]}).catch(()=>{})}}catch(e){}
+  $('idle').style.display='none';$('cam').textContent='Stop camera';
+  if(typeof jsQR==='undefined')status('bad','<b>QR reader library did not load</b>Check your internet connection and reload the page. The camera itself is working.');
+  else status('','Camera on. Hold the passport QR inside the frame.');
+  tick()};
+function tick(){
+  if(!stream)return;
+  try{const v=$('v'),c=$('c');
+    if(typeof jsQR!=='undefined'&&v.videoWidth){c.width=v.videoWidth;c.height=v.videoHeight;const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(v,0,0);
+      const d=x.getImageData(0,0,c.width,c.height),q=jsQR(d.data,d.width,d.height);
+      if(q&&q.data)handle(q.data);
+      else{const t=performance.now();if(t-lastZx>300){lastZx=t;zxRead(c)}}}}catch(e){console.error(e)}
+  requestAnimationFrame(tick)}
+let zx=null,lastZx=0;
+function zxRead(c){const t=zxText(c);if(t)handle(t)}
+function zxText(c){
+  if(typeof ZXing==='undefined')return null;
+  try{if(!zx){const h=new Map();
+      h.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[ZXing.BarcodeFormat.PDF_417,ZXing.BarcodeFormat.QR_CODE,ZXing.BarcodeFormat.DATA_MATRIX]);
+      h.set(ZXing.DecodeHintType.TRY_HARDER,true);zx=new ZXing.MultiFormatReader();zx.setHints(h)}
+    const r=zx.decode(new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.HTMLCanvasElementLuminanceSource(c))));
+    return r&&r.getText()||null}catch(e){return null}}
+
+const onPhoto=e=>{const f=e.target.files[0];if(!f)return;const img=new Image();
+  img.onload=()=>{let txt=null;
+    const s=Math.min(1,2400/Math.max(img.width,img.height)),w=Math.round(img.width*s),h=Math.round(img.height*s);
+    for(const rot of [0,90,270,180]){
+      const c=$('c'),sw=rot==90||rot==270;c.width=sw?h:w;c.height=sw?w:h;
+      const x=c.getContext('2d',{willReadFrequently:true});x.save();x.translate(c.width/2,c.height/2);x.rotate(rot*Math.PI/180);x.drawImage(img,-w/2,-h/2,w,h);x.restore();
+      const d=x.getImageData(0,0,c.width,c.height),q=typeof jsQR!=='undefined'?jsQR(d.data,d.width,d.height):null;
+      txt=(q&&q.data)||zxText(c);if(txt)break}
+    URL.revokeObjectURL(img.src);
+    if(txt){lock=false;handle(txt)}else status('bad','<b>No barcode found in this photo</b>Take a closer, sharper photo so the barcode fills most of the picture, avoid glare, and try again.')};
+  img.src=URL.createObjectURL(f);e.target.value=''};
+$('photo').onchange=onPhoto;$('photo2').onchange=onPhoto;
+demoWb();
+</script>
+</body>
+</html>
